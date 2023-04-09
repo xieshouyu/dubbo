@@ -17,8 +17,8 @@
 
 package org.apache.dubbo.remoting.exchange.support.header;
 
+import org.apache.dubbo.common.timer.HashedWheelTimer;
 import org.apache.dubbo.common.timer.Timeout;
-import org.apache.dubbo.common.timer.Timer;
 import org.apache.dubbo.common.timer.TimerTask;
 import org.apache.dubbo.remoting.Channel;
 
@@ -32,16 +32,22 @@ public abstract class AbstractTimerTask implements TimerTask {
 
     private final ChannelProvider channelProvider;
 
+    private final HashedWheelTimer hashedWheelTimer;
+
     private final Long tick;
 
     protected volatile boolean cancel = false;
 
-    AbstractTimerTask(ChannelProvider channelProvider, Long tick) {
-        if (channelProvider == null || tick == null) {
+    private volatile Timeout timeout;
+
+    AbstractTimerTask(ChannelProvider channelProvider, HashedWheelTimer hashedWheelTimer, Long tick) {
+        if (channelProvider == null || hashedWheelTimer == null || tick == null) {
             throw new IllegalArgumentException();
         }
-        this.tick = tick;
+        this.hashedWheelTimer = hashedWheelTimer;
         this.channelProvider = channelProvider;
+        this.tick = tick;
+        start();
     }
 
     static Long lastRead(Channel channel) {
@@ -56,12 +62,17 @@ public abstract class AbstractTimerTask implements TimerTask {
         return System.currentTimeMillis();
     }
 
-    public void cancel() {
+    public synchronized void cancel() {
         this.cancel = true;
+        this.timeout.cancel();
     }
 
-    private void reput(Timeout timeout, Long tick) {
-        if (timeout == null || tick == null) {
+    private void start() {
+        this.timeout = hashedWheelTimer.newTimeout(this, tick, TimeUnit.MILLISECONDS);
+    }
+
+    private synchronized void reput(Timeout timeout) {
+        if (timeout == null) {
             throw new IllegalArgumentException();
         }
 
@@ -69,24 +80,22 @@ public abstract class AbstractTimerTask implements TimerTask {
             return;
         }
 
-        Timer timer = timeout.timer();
-        if (timer.isStop() || timeout.isCancelled()) {
+        if (hashedWheelTimer.isStop() || timeout.isCancelled()) {
             return;
         }
 
-        timer.newTimeout(timeout.task(), tick, TimeUnit.MILLISECONDS);
+        this.timeout = hashedWheelTimer.newTimeout(timeout.task(), tick, TimeUnit.MILLISECONDS);
     }
 
     @Override
-    public void run(Timeout timeout) throws Exception {
-        Collection<Channel> c = channelProvider.getChannels();
-        for (Channel channel : c) {
-            if (channel.isClosed()) {
-                continue;
+    public synchronized void run(Timeout timeout) throws Exception {
+        Collection<Channel> channels = channelProvider.getChannels();
+        for (Channel channel : channels) {
+            if (!channel.isClosed()) {
+                doTask(channel);
             }
-            doTask(channel);
         }
-        reput(timeout, tick);
+        reput(timeout);
     }
 
     protected abstract void doTask(Channel channel);

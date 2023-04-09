@@ -74,6 +74,8 @@ public class StaticDirectory<T> extends AbstractDirectory<T> {
         for (Invoker<T> invoker : getValidInvokers()) {
             if (invoker.isAvailable()) {
                 return true;
+            } else {
+                addInvalidateInvoker(invoker);
             }
         }
         return false;
@@ -110,7 +112,7 @@ public class StaticDirectory<T> extends AbstractDirectory<T> {
                 List<Invoker<T>> finalInvokers = routerChain.route(getConsumerUrl(), invokers, invocation);
                 return finalInvokers == null ? BitList.emptyList() : finalInvokers;
             } catch (Throwable t) {
-                logger.error(CLUSTER_FAILED_SITE_SELECTION,"Failed to execute router","","Failed to execute router: " + getUrl() + ", cause: " + t.getMessage(),t);
+                logger.error(CLUSTER_FAILED_SITE_SELECTION, "Failed to execute router", "", "Failed to execute router: " + getUrl() + ", cause: " + t.getMessage(), t);
                 return BitList.emptyList();
             }
         }

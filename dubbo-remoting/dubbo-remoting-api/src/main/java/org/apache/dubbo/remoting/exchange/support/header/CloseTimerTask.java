@@ -19,6 +19,7 @@ package org.apache.dubbo.remoting.exchange.support.header;
 
 import org.apache.dubbo.common.logger.ErrorTypeAwareLogger;
 import org.apache.dubbo.common.logger.LoggerFactory;
+import org.apache.dubbo.common.timer.HashedWheelTimer;
 import org.apache.dubbo.remoting.Channel;
 
 import static org.apache.dubbo.common.constants.LoggerCodeConstants.PROTOCOL_FAILED_RESPONSE;
@@ -33,8 +34,8 @@ public class CloseTimerTask extends AbstractTimerTask {
 
     private final int idleTimeout;
 
-    public CloseTimerTask(ChannelProvider channelProvider, Long heartbeatTimeoutTick, int idleTimeout) {
-        super(channelProvider, heartbeatTimeoutTick);
+    public CloseTimerTask(ChannelProvider channelProvider, HashedWheelTimer hashedWheelTimer, Long heartbeatTimeoutTick, int idleTimeout) {
+        super(channelProvider, hashedWheelTimer, heartbeatTimeoutTick);
         this.idleTimeout = idleTimeout;
     }
 
@@ -46,7 +47,7 @@ public class CloseTimerTask extends AbstractTimerTask {
             Long now = now();
             // check ping & pong at server
             if ((lastRead != null && now - lastRead > idleTimeout)
-                || (lastWrite != null && now - lastWrite > idleTimeout)) {
+                    || (lastWrite != null && now - lastWrite > idleTimeout)) {
                 logger.warn(PROTOCOL_FAILED_RESPONSE, "", "", "Close channel " + channel + ", because idleCheck timeout: " + idleTimeout + "ms");
                 channel.close();
             }

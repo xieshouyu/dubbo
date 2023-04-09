@@ -22,6 +22,7 @@ import org.apache.dubbo.common.timer.HashedWheelTimer;
 import org.apache.dubbo.remoting.Channel;
 import org.apache.dubbo.remoting.exchange.Request;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,12 @@ class HeartBeatTaskTest {
         };
 
         AbstractTimerTask.ChannelProvider cp = () -> Collections.<Channel>singletonList(channel);
-        heartbeatTimerTask = new HeartbeatTimerTask(cp, tickDuration / HEARTBEAT_CHECK_TICK, (int) tickDuration);
+        heartbeatTimerTask = new HeartbeatTimerTask(() -> Collections.singleton(channel), heartbeatTimer, tickDuration / HEARTBEAT_CHECK_TICK, (int) tickDuration);
+    }
+
+    @AfterEach
+    public void teardown() {
+        heartbeatTimerTask.cancel();
     }
 
     @Test
@@ -66,8 +72,6 @@ class HeartBeatTaskTest {
         url = url.addParameter(DUBBO_VERSION_KEY, "2.1.1");
         channel.setAttribute(HeartbeatHandler.KEY_READ_TIMESTAMP, now);
         channel.setAttribute(HeartbeatHandler.KEY_WRITE_TIMESTAMP, now);
-
-        heartbeatTimer.newTimeout(heartbeatTimerTask, 250, TimeUnit.MILLISECONDS);
 
         Thread.sleep(2000L);
         List<Object> objects = channel.getSentObjects();

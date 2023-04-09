@@ -50,13 +50,18 @@ public class HeaderExchangeClient implements ExchangeClient {
     private final Client client;
     private final ExchangeChannel channel;
 
-    public static GlobalResourceInitializer<HashedWheelTimer> IDLE_CHECK_TIMER = new GlobalResourceInitializer<>(() ->
-        new HashedWheelTimer(new NamedThreadFactory("dubbo-client-idleCheck", true), 1,
-            TimeUnit.SECONDS, TICKS_PER_WHEEL),
-        HashedWheelTimer::stop);
+    public static GlobalResourceInitializer<HashedWheelTimer> HEARTBEAT_CHECK_TIMER = new GlobalResourceInitializer<>(() ->
+            new HashedWheelTimer(new NamedThreadFactory("dubbo-client-heartbeat", true), 1,
+                    TimeUnit.SECONDS, TICKS_PER_WHEEL),
+            HashedWheelTimer::stop);
+    public static GlobalResourceInitializer<HashedWheelTimer> RECONNECT_CHECK_TIMER = new GlobalResourceInitializer<>(() ->
+            new HashedWheelTimer(new NamedThreadFactory("dubbo-client-reconnect", true), 1,
+                    TimeUnit.SECONDS, TICKS_PER_WHEEL),
+            HashedWheelTimer::stop);
 
-    private Timeout reconnectTimer;
-    private Timeout heartBeatTimer;
+    private ReconnectTimerTask reconnectTimerTask;
+    private HeartbeatTimerTask heartBeatTimerTask;
+    private final int idleTimeout;
 
     public HeaderExchangeClient(Client client, boolean startTimer) {
         Assert.notNull(client, "Client can't be null");
@@ -65,8 +70,11 @@ public class HeaderExchangeClient implements ExchangeClient {
 
         if (startTimer) {
             URL url = client.getUrl();
+            idleTimeout = getIdleTimeout(url);
             startReconnectTask(url);
             startHeartBeatTask(url);
+        } else {
+            idleTimeout = 0;
         }
     }
 
@@ -107,7 +115,16 @@ public class HeaderExchangeClient implements ExchangeClient {
 
     @Override
     public boolean isConnected() {
-        return channel.isConnected();
+        if (channel.isConnected()) {
+            if (idleTimeout <= 0) {
+                return true;
+            }
+            Long lastRead = (Long) channel.getAttribute(HeartbeatHandler.KEY_READ_TIMESTAMP);
+            Long now = System.currentTimeMillis();
+
+            return lastRead == null || now - lastRead < idleTimeout;
+        }
+        return false;
     }
 
     @Override
@@ -136,7 +153,7 @@ public class HeaderExchangeClient implements ExchangeClient {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         doClose();
         channel.close();
     }
@@ -167,7 +184,7 @@ public class HeaderExchangeClient implements ExchangeClient {
     }
 
     @Override
-    public void reconnect() throws RemotingException {
+    public synchronized void reconnect() throws RemotingException {
         client.reconnect();
     }
 
@@ -193,32 +210,27 @@ public class HeaderExchangeClient implements ExchangeClient {
 
     private void startHeartBeatTask(URL url) {
         if (!client.canHandleIdle()) {
-            AbstractTimerTask.ChannelProvider cp = () -> Collections.singletonList(HeaderExchangeClient.this);
             int heartbeat = getHeartbeat(url);
             long heartbeatTick = calculateLeastDuration(heartbeat);
-            HeartbeatTimerTask heartBeatTimerTask = new HeartbeatTimerTask(cp, heartbeatTick, heartbeat);
-            heartBeatTimer = IDLE_CHECK_TIMER.get().newTimeout(heartBeatTimerTask, heartbeatTick, TimeUnit.MILLISECONDS);
+            heartBeatTimerTask = new HeartbeatTimerTask(() -> Collections.singleton(this), HEARTBEAT_CHECK_TIMER.get(), heartbeatTick, heartbeat);
         }
     }
 
     private void startReconnectTask(URL url) {
         if (shouldReconnect(url)) {
-            AbstractTimerTask.ChannelProvider cp = () -> Collections.singletonList(HeaderExchangeClient.this);
-            int idleTimeout = getIdleTimeout(url);
             long heartbeatTimeoutTick = calculateLeastDuration(idleTimeout);
-            ReconnectTimerTask reconnectTimerTask = new ReconnectTimerTask(cp, heartbeatTimeoutTick, idleTimeout);
-            reconnectTimer = IDLE_CHECK_TIMER.get().newTimeout(reconnectTimerTask, heartbeatTimeoutTick, TimeUnit.MILLISECONDS);
+            reconnectTimerTask = new ReconnectTimerTask(() -> Collections.singleton(this), RECONNECT_CHECK_TIMER.get(), heartbeatTimeoutTick, idleTimeout);
         }
     }
 
     private void doClose() {
-        if (heartBeatTimer != null) {
-            heartBeatTimer.cancel();
-            heartBeatTimer = null;
+        if (heartBeatTimerTask != null) {
+            heartBeatTimerTask.cancel();
+            heartBeatTimerTask = null;
         }
-        if (reconnectTimer != null) {
-            reconnectTimer.cancel();
-            reconnectTimer = null;
+        if (reconnectTimerTask != null) {
+            reconnectTimerTask.cancel();
+            reconnectTimerTask = null;
         }
     }
 

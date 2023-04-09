@@ -66,7 +66,7 @@ public class HeaderExchangeServer implements ExchangeServer {
 
     public static GlobalResourceInitializer<HashedWheelTimer> IDLE_CHECK_TIMER = new GlobalResourceInitializer<>(() -> new HashedWheelTimer(new NamedThreadFactory("dubbo-server-idleCheck", true), 1, TimeUnit.SECONDS, TICKS_PER_WHEEL), HashedWheelTimer::stop);
 
-    private Timeout closeTimer;
+    private CloseTimerTask closeTimer;
 
     public HeaderExchangeServer(RemotingServer server) {
         Assert.notNull(server, "server == null");
@@ -265,10 +265,7 @@ public class HeaderExchangeServer implements ExchangeServer {
             AbstractTimerTask.ChannelProvider cp = () -> unmodifiableCollection(HeaderExchangeServer.this.getChannels());
             int idleTimeout = getIdleTimeout(url);
             long idleTimeoutTick = calculateLeastDuration(idleTimeout);
-            CloseTimerTask closeTimerTask = new CloseTimerTask(cp, idleTimeoutTick, idleTimeout);
-
-            // init task and start timer.
-            this.closeTimer = IDLE_CHECK_TIMER.get().newTimeout(closeTimerTask, idleTimeoutTick, TimeUnit.MILLISECONDS);
+            this.closeTimer = new CloseTimerTask(cp, IDLE_CHECK_TIMER.get(), idleTimeoutTick, idleTimeout);
         }
     }
 }
